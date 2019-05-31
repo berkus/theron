@@ -12,6 +12,7 @@
 
 #include <Theron/Detail/Alignment/MessageAlignment.h>
 #include <Theron/Detail/Messages/IMessage.h>
+#include <Theron/Detail/Messages/MessageSize.h>
 #include <Theron/Detail/Messages/MessageTraits.h>
 
 
@@ -47,7 +48,7 @@ public:
         // We lay the message and its value side by side in memory.
         // The value is first, since it's the value that needs the alignment.
         // The message object itself doesn't need special alignment.
-        return GetValueSize() + sizeof(ThisType);
+        return MessageSize<ValueType>::GetSize() + sizeof(ThisType);
     }
 
     /**
@@ -72,7 +73,7 @@ public:
         ValueType *const pValue = new (block) ValueType(value);
 
         // Allocate the message object immediately after the value, passing it the value's address.
-        char *const pObject(reinterpret_cast<char *>(pValue) + GetValueSize());
+        char *const pObject(reinterpret_cast<char *>(pValue) + MessageSize<ValueType>::GetSize());
         return new (pObject) ThisType(pValue, from);
     }
 
@@ -125,22 +126,6 @@ private:
       IMessage(from, block, ThisType::GetSize())
     {
         THERON_ASSERT(block);
-    }
-
-    THERON_FORCEINLINE static uint32_t GetValueSize()
-    {
-        uint32_t valueSize(sizeof(ValueType));
-        const uint32_t minimumAllocationSize(4);
-
-        // Empty structs passed as values have a size of one byte, which we don't like.
-        // To be on the safe side we round every allocation up to four bytes.
-        // If we don't then the following data won't be 4-byte aligned.
-        if (valueSize < minimumAllocationSize)
-        {
-            valueSize = minimumAllocationSize;
-        }
-
-        return valueSize;
     }
 
     Message(const Message &other);

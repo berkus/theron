@@ -31,7 +31,10 @@ public:
         TESTFRAMEWORK_REGISTER_TEST(ConstructFrameworkThreadCount);
         TESTFRAMEWORK_REGISTER_TEST(ConstructFrameworkDefaultParams);
         TESTFRAMEWORK_REGISTER_TEST(ConstructFrameworkParamsThreadCount);
-        TESTFRAMEWORK_REGISTER_TEST(ConstructFrameworkParamsThreadCountNode);
+        TESTFRAMEWORK_REGISTER_TEST(ConstructFrameworkParamsNodeProcessor);
+        TESTFRAMEWORK_REGISTER_TEST(ConstructFrameworkParamsStrategy);
+        TESTFRAMEWORK_REGISTER_TEST(ConstructFrameworkParamsPriorityOne);
+        TESTFRAMEWORK_REGISTER_TEST(ConstructFrameworkParamsPriorityMinusOne);
         TESTFRAMEWORK_REGISTER_TEST(ConstructActor);
         TESTFRAMEWORK_REGISTER_TEST(ConstructMultipleActors);
         TESTFRAMEWORK_REGISTER_TEST(ConstructAddress);
@@ -40,14 +43,13 @@ public:
         TESTFRAMEWORK_REGISTER_TEST(GetActorFramework);
         TESTFRAMEWORK_REGISTER_TEST(GetActorAddress);
         TESTFRAMEWORK_REGISTER_TEST(RegisterHandler);
-        TESTFRAMEWORK_REGISTER_TEST(SendHandledMessage);
+        TESTFRAMEWORK_REGISTER_TEST(SendHandledMessageInBlockingFramework);
+        TESTFRAMEWORK_REGISTER_TEST(SendHandledMessageInNonBlockingFramework);
         TESTFRAMEWORK_REGISTER_TEST(CreateActorInFunction);
         TESTFRAMEWORK_REGISTER_TEST(SendMessageToReceiverInFunction);
         TESTFRAMEWORK_REGISTER_TEST(SendMessageFromNullAddressInFunction);
         TESTFRAMEWORK_REGISTER_TEST(SendMessageToActorFromNullAddressInFunction);
         TESTFRAMEWORK_REGISTER_TEST(SendMessageToActorFromReceiverInFunction);
-        TESTFRAMEWORK_REGISTER_TEST(PushMessageToActorFromNullAddressInFunction);
-        TESTFRAMEWORK_REGISTER_TEST(PushMessageToActorFromReceiverInFunction);
         TESTFRAMEWORK_REGISTER_TEST(ReceiveReplyInFunction);
         TESTFRAMEWORK_REGISTER_TEST(CatchReplyInFunction);
         TESTFRAMEWORK_REGISTER_TEST(SendNonPODMessageInFunction);
@@ -86,7 +88,6 @@ public:
         TESTFRAMEWORK_REGISTER_TEST(SendEmptyMessage);
         TESTFRAMEWORK_REGISTER_TEST(MultipleFrameworks);
         TESTFRAMEWORK_REGISTER_TEST(ConstructFrameworkWithParameters);
-        TESTFRAMEWORK_REGISTER_TEST(UseActorRefs);
         TESTFRAMEWORK_REGISTER_TEST(ThreadCountApi);
         TESTFRAMEWORK_REGISTER_TEST(EventCounterApi);
         TESTFRAMEWORK_REGISTER_TEST(ConstructEndPoint);
@@ -122,9 +123,32 @@ public:
         Theron::Framework framework(params);
     }
 
-    inline static void ConstructFrameworkParamsThreadCountNode()
+    inline static void ConstructFrameworkParamsNodeProcessor()
     {
-        Theron::Framework::Parameters params(16, 0);
+        Theron::Framework::Parameters params(16, 0x1, 0xFFFF);
+        params.mNodeMask = 0x1;
+        params.mProcessorMask = 0xFFFF;
+        Theron::Framework framework(params);
+    }
+
+    inline static void ConstructFrameworkParamsStrategy()
+    {
+        Theron::Framework::Parameters params(16, 0x1, 0xFFFF, Theron::YIELD_STRATEGY_CONDITION);
+        params.mYieldStrategy = Theron::YIELD_STRATEGY_CONDITION;
+        Theron::Framework framework(params);
+    }
+
+    inline static void ConstructFrameworkParamsPriorityOne()
+    {
+        Theron::Framework::Parameters params(16, 0x1, 0xFFFF, Theron::YIELD_STRATEGY_CONDITION, 1.0f);
+        params.mThreadPriority = 1.0f;
+        Theron::Framework framework(params);
+    }
+
+    inline static void ConstructFrameworkParamsPriorityMinusOne()
+    {
+        Theron::Framework::Parameters params(16, 0x1, 0xFFFF, Theron::YIELD_STRATEGY_CONDITION, -1.0f);
+        params.mThreadPriority = -1.0f;
         Theron::Framework framework(params);
     }
 
@@ -195,14 +219,39 @@ public:
         Registrar<int> actor(framework);
     }
 
-    inline static void SendHandledMessage()
+    inline static void SendHandledMessageInBlockingFramework()
     {
-        Theron::Framework framework;
+        Theron::Framework::Parameters params;
+        params.mYieldStrategy = Theron::YIELD_STRATEGY_CONDITION;
+
+        Theron::Framework framework(params);
         Theron::Receiver receiver;
         Replier<int> actor(framework);
 
         framework.Send(int(0), receiver.GetAddress(), actor.GetAddress());
+        framework.Send(int(1), receiver.GetAddress(), actor.GetAddress());
+        framework.Send(int(2), receiver.GetAddress(), actor.GetAddress());
 
+        receiver.Wait();
+        receiver.Wait();
+        receiver.Wait();
+    }
+
+    inline static void SendHandledMessageInNonBlockingFramework()
+    {
+        Theron::Framework::Parameters params;
+        params.mYieldStrategy = Theron::YIELD_STRATEGY_HYBRID;
+
+        Theron::Framework framework(params);
+        Theron::Receiver receiver;
+        Replier<int> actor(framework);
+
+        framework.Send(int(0), receiver.GetAddress(), actor.GetAddress());
+        framework.Send(int(1), receiver.GetAddress(), actor.GetAddress());
+        framework.Send(int(2), receiver.GetAddress(), actor.GetAddress());
+
+        receiver.Wait();
+        receiver.Wait();
         receiver.Wait();
     }
 
@@ -246,26 +295,6 @@ public:
         Signaller signaller(framework);
 
         framework.Send(receiver.GetAddress(), receiver.GetAddress(), signaller.GetAddress());
-        receiver.Wait();
-    }
-
-    inline static void PushMessageToActorFromNullAddressInFunction()
-    {
-        Theron::Framework framework;
-        Theron::Receiver receiver;
-        Signaller signaler(framework);
-
-        signaler.Push(receiver.GetAddress(), Theron::Address::Null());
-        receiver.Wait();
-    }
-
-    inline static void PushMessageToActorFromReceiverInFunction()
-    {
-        Theron::Framework framework;
-        Theron::Receiver receiver;
-        Signaller signaler(framework);
-
-        signaler.Push(receiver.GetAddress(), receiver.GetAddress());
         receiver.Wait();
     }
 
@@ -904,9 +933,9 @@ public:
         }
 
         // Check that the undelivered message was handled by the registered fallback handler.
-        Check(fallbackHandler.mValue == 42, "Blind fallback handler failed");
-        Check(fallbackHandler.mSize == sizeof(Theron::uint32_t), "Blind fallback handler failed");
-        Check(fallbackHandler.mAddress == receiver.GetAddress(), "Blind fallback handler failed");
+        Check(fallbackHandler.mValue == 42, "Blind fallback handler collected bad value");
+        Check(fallbackHandler.mSize == sizeof(Theron::uint32_t), "Blind fallback handler collected bad size");
+        Check(fallbackHandler.mAddress == receiver.GetAddress(), "Blind fallback handler collected bad address");
     }
 
     inline static void HandleMessageSentToStaleFrameworkInFunction()
@@ -1111,45 +1140,6 @@ public:
         receiver.Wait();
     }
 
-    inline static void UseActorRefs()
-    {
-        Theron::Framework framework;
-        Theron::Receiver receiver;
-
-        Theron::ActorRef copyOne;
-        Theron::ActorRef copyTwo;
-
-        {
-            // Test parameterized and parameterless construction.
-            Version3Replier::Parameters params;
-            const Theron::ActorRef actorOne(framework.CreateActor<Version3Replier>());
-            Theron::ActorRef actorTwo(framework.CreateActor<Version3Replier>(params));
-
-            // Test transferral of ownership to copy-constructed ActorRefs.
-            const Theron::ActorRef tempOne(actorOne);
-            Theron::ActorRef tempTwo(actorTwo);
-
-            // Test transferral of ownership to assigned ActorRefs.
-            copyOne = tempOne;
-            copyTwo = tempTwo;
-        }
-
-        // Check ActorRef::operator== and ActorRef::operator!=
-        Check(copyOne == copyOne, "ActorRef::operator== failed");
-        Check(copyTwo == copyTwo, "ActorRef::operator== failed");
-        Check(copyOne != copyTwo, "ActorRef::operator!= failed");
-
-        // Test ActorRef::Null().
-        Check(copyOne != Theron::ActorRef::Null(), "ActorRef is null");
-        Check(copyTwo != Theron::ActorRef::Null(), "ActorRef is null");
-
-        framework.Send(int(35), receiver.GetAddress(), copyOne.GetAddress());
-        framework.Send(int(36), receiver.GetAddress(), copyTwo.GetAddress());
-
-        receiver.Wait();
-        receiver.Wait();
-    }
-
     inline static void ThreadCountApi()
     {
         Theron::Framework framework;
@@ -1187,6 +1177,7 @@ public:
 
     inline static void EventCounterApi()
     {
+#if THERON_ENABLE_COUNTERS
         typedef Replier<int> IntReplier;
 
         Theron::Framework framework;
@@ -1195,10 +1186,10 @@ public:
         Theron::Detail::Utils::SleepThread(10);
 
         // Check initial values.
-        Check(framework.GetCounterValue(Theron::COUNTER_MESSAGES_PROCESSED) == 0, "GetCounterValue failed");
+        Check(framework.GetCounterValue(0) == 0, "GetCounterValue failed");
 
         uint32_t counterValues[32];
-        uint32_t valueCount(framework.GetPerThreadCounterValues(Theron::COUNTER_MESSAGES_PROCESSED, counterValues, 32));
+        uint32_t valueCount(framework.GetPerThreadCounterValues(0, counterValues, 32));
 
         uint32_t messagesProcessed(0);
         for (uint32_t index = 0; index < valueCount; ++index)
@@ -1213,9 +1204,9 @@ public:
         receiver.Wait();
 
         // Check values after some work.
-        Check(framework.GetCounterValue(Theron::COUNTER_MESSAGES_PROCESSED) > 0, "GetCounterValue failed");
+        Check(framework.GetCounterValue(0) > 0, "GetCounterValue failed");
 
-        valueCount = framework.GetPerThreadCounterValues(Theron::COUNTER_MESSAGES_PROCESSED, counterValues, 32);
+        valueCount = framework.GetPerThreadCounterValues(0, counterValues, 32);
 
         messagesProcessed = 0;
         for (uint32_t index = 0; index < valueCount; ++index)
@@ -1228,9 +1219,9 @@ public:
         // Check values after reset.
         framework.ResetCounters();
 
-        Check(framework.GetCounterValue(Theron::COUNTER_MESSAGES_PROCESSED) == 0, "GetCounterValue failed");
+        Check(framework.GetCounterValue(0) == 0, "GetCounterValue failed");
 
-        valueCount = framework.GetPerThreadCounterValues(Theron::COUNTER_MESSAGES_PROCESSED, counterValues, 32);
+        valueCount = framework.GetPerThreadCounterValues(0, counterValues, 32);
 
         messagesProcessed = 0;
         for (uint32_t index = 0; index < valueCount; ++index)
@@ -1239,6 +1230,7 @@ public:
         }
 
         Check(messagesProcessed == 0, "GetPerThreadCounterValues failed");
+#endif
     }
 
     inline static void ConstructEndPoint()
@@ -2112,61 +2104,6 @@ private:
 
         const Theron::Address mNext;
     };
-
-    // Derive from a different baseclass first to check we cope with the non-zero offset.
-    class Version3Replier : public SomeOtherBaseclass, public Theron::Actor
-    {
-    public:
-
-        struct Parameters
-        {
-        };
-
-        Version3Replier()
-        {
-            RegisterHandler(this, &Version3Replier::Handler);
-
-            // Allocate memory in the constructor to check the destructor is called.
-            mMemory = Theron::AllocatorManager::Instance().GetAllocator()->Allocate(64);
-
-            // Check the alignment of the final actor type.
-            THERON_ASSERT(THERON_ALIGNED(this, 128));
-        }
-
-        Version3Replier(const Parameters &/*params*/)
-        {
-            RegisterHandler(this, &Version3Replier::Handler);
-
-            // Allocate memory in the constructor to check the destructor is called.
-            mMemory = Theron::AllocatorManager::Instance().GetAllocator()->Allocate(64);
-
-            // Check the alignment of the final actor type.
-            THERON_ASSERT(THERON_ALIGNED(this, 128));
-        }
-
-        ~Version3Replier()
-        {
-            DeregisterHandler(this, &Version3Replier::Handler);
-
-            // Free the memory in the destructor to check the destructor is called.
-            // The DefaultAllocator memory allocation checking will fail if we leak.
-            Theron::AllocatorManager::Instance().GetAllocator()->Free(mMemory);
-        }
-
-    private:
-
-        // Implementation of virtual method in SomeOtherBaseclass.
-        inline virtual void DoNothing()
-        {
-        }
-
-        void Handler(const int &message, const Theron::Address from)
-        {
-            Send(message, from);
-        }
-
-        void *mMemory;
-    };
 };
 
 
@@ -2181,8 +2118,6 @@ const char *FeatureTestSuite::Sequencer<CountType>::BAD = "good";
 
 
 THERON_REGISTER_MESSAGE(Tests::FeatureTestSuite::IntVectorMessage);
-
-THERON_ALIGN_ACTOR(Tests::FeatureTestSuite::Version3Replier, 128);
 
 
 #endif // THERON_TESTS_TESTSUITES_FEATURETESTSUITE_H

@@ -67,11 +67,12 @@ private:
     {
         if (message > 0)
         {
-            TailSend(message - 1, mPartner);
-            return;
+            Send(message - 1, mPartner);
         }
-
-        TailSend(message, mCaller);
+        else
+        {
+            Send(message, mCaller);
+        }
     }
 
     Theron::Address mCaller;
@@ -89,8 +90,6 @@ THERON_DEFINE_REGISTERED_MESSAGE(PingPong::StartMessage);
 
 int main(int argc, char *argv[])
 {
-    int numMessagesProcessed(0);
-
     const int numMessages = (argc > 1 && atoi(argv[1]) > 0) ? atoi(argv[1]) : 50000000;
     const int numThreads = (argc > 2 && atoi(argv[2]) > 0) ? atoi(argv[2]) : 16;
 
@@ -120,15 +119,12 @@ int main(int argc, char *argv[])
     receiver.Wait();
     timer.Stop();
 
-    numMessagesProcessed = framework.GetCounterValue(Theron::COUNTER_MESSAGES_PROCESSED);
-
     // The number of full cycles is half the number of messages.
-    printf("Completed %d message response cycles\n", numMessages / 2);
-    printf("Sent %d messages in %.1f seconds\n", numMessagesProcessed, timer.Seconds());
+    printf("Completed %d message response cycles in %.1f seconds\n", numMessages / 2, timer.Seconds());
     printf("Average response time is %.10f seconds\n", timer.Seconds() / (numMessages / 2));
 
 #if THERON_ENABLE_DEFAULTALLOCATOR_CHECKS
-    Theron::IAllocator *const allocator(Theron::AllocatorManager::Instance().GetAllocator());
+    Theron::IAllocator *const allocator(Theron::AllocatorManager::GetAllocator());
     const int allocationCount(static_cast<Theron::DefaultAllocator *>(allocator)->GetAllocationCount());
     const int peakBytesAllocated(static_cast<Theron::DefaultAllocator *>(allocator)->GetPeakBytesAllocated());
     printf("Total number of allocations: %d calls\n", allocationCount);

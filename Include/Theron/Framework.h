@@ -11,34 +11,30 @@ Framework that hosts and executes actors.
 
 #include <new>
 
-#include <Theron/ActorRef.h>
 #include <Theron/Address.h>
 #include <Theron/Align.h>
 #include <Theron/AllocatorManager.h>
 #include <Theron/Assert.h>
 #include <Theron/BasicTypes.h>
-#include <Theron/Counters.h>
 #include <Theron/Defines.h>
 #include <Theron/IAllocator.h>
+#include <Theron/YieldStrategy.h>
 
-#include <Theron/Detail/Alignment/ActorAlignment.h>
 #include <Theron/Detail/Allocators/CachingAllocator.h>
-#include <Theron/Detail/Containers/List.h>
 #include <Theron/Detail/Debug/BuildDescriptor.h>
 #include <Theron/Detail/Directory/Directory.h>
 #include <Theron/Detail/Directory/Entry.h>
 #include <Theron/Detail/Handlers/DefaultFallbackHandler.h>
 #include <Theron/Detail/Handlers/FallbackHandlerCollection.h>
-#include <Theron/Detail/Legacy/ActorRegistry.h>
 #include <Theron/Detail/Mailboxes/Mailbox.h>
 #include <Theron/Detail/Messages/MessageCreator.h>
-#include <Theron/Detail/Messages/MessageSender.h>
-#include <Theron/Detail/MailboxProcessor/Processor.h>
-#include <Theron/Detail/MailboxProcessor/ThreadPool.h>
-#include <Theron/Detail/Network/String.h>
+#include <Theron/Detail/Scheduler/Counting.h>
+#include <Theron/Detail/Scheduler/MailboxContext.h>
+#include <Theron/Detail/Scheduler/IScheduler.h>
+#include <Theron/Detail/Strings/String.h>
+#include <Theron/Detail/Strings/StringPool.h>
 #include <Theron/Detail/Threading/Atomic.h>
 #include <Theron/Detail/Threading/SpinLock.h>
-#include <Theron/Detail/Threading/Thread.h>
 
 
 #ifdef _MSC_VER
@@ -54,44 +50,6 @@ namespace Theron
 
 class Actor;
 class EndPoint;
-
-
-/**
-\brief Enumerates the available worker thread yield strategies.
-
-Each \ref Theron::Framework contains a pool of worker threads that are used to execute
-the actors hosted in the framework. The worker threads service a queue, processing actors that
-have received messages and executing their registered message handlers.
-
-When constructing a Framework, a \ref Theron::Framework::Parameters object may be provided with
-parameters that control the structure and behavior of the the framework's internal threadpool.
-This enum defines the available values of the \ref Theron::Framework::Parameters::mYieldStrategy "mYieldStrategy"
-member of the Parameters structure.
-
-The mYieldStrategy member defines the strategy that the worker threads use to avoid \em busy \em waiting
-on the work queue. The available strategies have different performance characteristics, and are best
-suited to different kinds of applications.
-
-The default strategy, \ref YIELD_STRATEGY_POLITE,
-causes the threads to go to sleep for a short period when they fail to find work on the work queue.
-Going to sleep frees up the processor during quiet periods and so gives other threads on the system
-a chance to be executed. The downside is that if a message arrives after a period of inactivity then
-it may only be processed when one or more threads awake, leading to some small latency.
-
-The more aggressive strategies cause the threads to yield to other threads, or simply spin, without going to
-sleep. These strategies typically have lower worst-case latency. However the reduced latency is at
-the expense of increased CPU usage, increased power consumption, and potentially lower throughput.
-
-When choosing a yield strategy it pays to consider how important immediate responsiveness is to your
-application: in most applications a latency of a few milliseconds is not significant, and the default
-strategy is a reasonable choice.
-*/
-enum YieldStrategy
-{
-    YIELD_STRATEGY_POLITE,              ///< Threads go to sleep when not in use.
-    YIELD_STRATEGY_STRONG,              ///< Threads yield to other threads but don't go to sleep.
-    YIELD_STRATEGY_AGGRESSIVE           ///< Threads never sleep or yield to other threads.
-};
 
 
 /**
@@ -124,8 +82,8 @@ The initial number of worker threads can be specified on construction of the
 framework by means of an explicit parameter to the Framework::Framework constructor.
 Additionally, the number of threads can be increased or decreased at runtime
 by calling \ref SetMinThreads or \ref SetMaxThreads. The utilization of the currently
-enabled threads is measured by performance metrics, queried by \ref GetCounterValue
-and enumerated by \ref Theron::Counter.
+enabled threads is measured by performance metrics which can be queried with
+\ref GetCounterValue.
 
 The worker threads are created and synchronized using underlying threading
 objects. Different implementations of these threading objects are possible,
@@ -154,8 +112,7 @@ class Framework : public Detail::Entry::Entity
 public:
 
     friend class Actor;
-    friend class ActorRef;
-    friend class Detail::MessageSender;
+    friend class EndPoint;
 
     /**
     \brief Parameters structure that can be passed to the Framework constructor.
@@ -177,7 +134,7 @@ public:
     affinity masks to limit execution of the worker threads of the framework to only the selected
     cores (leaving the remaining cores to other frameworks). Finally, since the cores dedicated to
     time-critical processing are never used for any other processing, one might choose to set the yield
-    strategy of the worker threads to \ref YIELD_STRATEGY_AGGRESSIVE, effectively busy-waiting for
+    strategy of the worker threads to \ref YIELD_STRATEGY_SPIN, effectively busy-waiting for
     the arrival of new messages.
 
     As well as setting processor affinities, the members of the Parameters structure allow the
@@ -235,23 +192,27 @@ public:
         \param nodeMask Bitfield mask specifying the NUMA node affinity of the created worker threads.
         \param processorMask Bitfield mask specifying the processor affinity of the created worker threads within each enabled NUMA node.
         \param yieldStrategy Enum value specifying how freely worker threads yield to other system threads.
+        \param priority Relative scheduling priority of the worker threads (range -1.0 to 1.0, 0.0 means "normal").
         */
         inline explicit Parameters(
             const uint32_t threadCount = 16,
             const uint32_t nodeMask = 0x1,
             const uint32_t processorMask = 0xFFFFFFFF,
-            const YieldStrategy yieldStrategy = YIELD_STRATEGY_POLITE) :
+            const YieldStrategy yieldStrategy = YIELD_STRATEGY_CONDITION,
+            const float priority = 0.0f) :
           mThreadCount(threadCount),
           mNodeMask(nodeMask),
           mProcessorMask(processorMask),
-          mYieldStrategy(yieldStrategy)
+          mYieldStrategy(yieldStrategy),
+          mThreadPriority(priority)
         {
         }
 
         uint32_t mThreadCount;          ///< The initial number of worker threads to create within the framework.
-        uint32_t mNodeMask;             ///< Specifies the NUMA processor nodes upon which the framework may execute.
-        uint32_t mProcessorMask;        ///< Specifies the subset of the processors in each NUMA processor node upon which the framework may execute.
-        YieldStrategy mYieldStrategy;   ///< Strategy that defines how freely worker threads yield to other system threads.
+        uint32_t mNodeMask;             ///< 32-bit mask specifying the NUMA processor nodes upon which the framework may execute.
+        uint32_t mProcessorMask;        ///< 32-bit mask specifying the subset of the processors in each NUMA processor node upon which the framework may execute.
+        YieldStrategy mYieldStrategy;   ///< Member of \ref YieldStrategy specifying how worker threads yield to other system threads when no work is available.
+        float mThreadPriority;          ///< Number between -1.0 and 1.0 indicating the relative scheduling priority of the worker threads.
     };
 
     /**
@@ -459,7 +420,7 @@ public:
 
     \see SetMinThreads
     */
-    void SetMaxThreads(const uint32_t count);
+    inline void SetMaxThreads(const uint32_t count);
 
     /**
     \brief Specifies a minimum limit on the number of worker threads enabled in this framework.
@@ -487,7 +448,7 @@ public:
 
     \see SetMaxThreads
     */
-    void SetMinThreads(const uint32_t count);
+    inline void SetMinThreads(const uint32_t count);
 
     /**
     \brief Returns the current maximum limit on the number of worker threads in this framework.
@@ -503,7 +464,7 @@ public:
 
     \see GetMinThreads
     */
-    uint32_t GetMaxThreads() const;
+    inline uint32_t GetMaxThreads() const;
 
     /**
     \brief Returns the current minimum limit on the number of worker threads in this framework.
@@ -515,7 +476,7 @@ public:
 
     \see GetMaxThreads
     */
-    uint32_t GetMinThreads() const;
+    inline uint32_t GetMinThreads() const;
 
     /**
     \brief Gets the actual number of worker threads currently in this framework.
@@ -532,7 +493,7 @@ public:
 
     \see GetPeakThreads
     */
-    uint32_t GetNumThreads() const;
+    inline uint32_t GetNumThreads() const;
 
     /**
     \brief Gets the peak number of worker threads ever active in the framework.
@@ -546,37 +507,64 @@ public:
     multiple frameworks are created then each has its own threadpool with an independently
     managed thread count.
     */
-    uint32_t GetPeakThreads() const;
+    inline uint32_t GetPeakThreads() const;
 
     /**
-    \brief Resets the \ref Counter "internal event counters".
+    \brief Returns the number of counters available for querying via GetCounterValue.
 
-    \see Counter
+    Each Framework maintains a number of performance counters that count performance
+    events. Many of these counters are really for internal development use and are
+    not intended to be meaningful to users.
+
+    Counters are indexed consecutively from zero, so the counter with highest index
+    has index equal to one less than the returned value. If the returned value is zero
+    then no counters are available.
+
+    \note Counters are only available if \ref THERON_ENABLE_COUNTERS is defined as non-zero.
+
+    \see GetCounterName
+    */
+    inline uint32_t GetNumCounters() const;
+
+    /**
+    \brief Returns the string name of the counter with the given index.
+    \see GetNumCounters
+    */
+    inline const char *GetCounterName(const uint32_t counter) const;
+
+    /**
+    \brief Resets all internal event counters for this framework.
+
     \see GetCounterValue
     */
-    void ResetCounters() const;
+    inline void ResetCounters();
 
     /**
     \brief Gets the current value of a specified event counter.
 
-    Each Framework maintains a set of \ref Counter "internal event counters".
+    Each Framework maintains a set of internal event counters.
     This method gets the current value of a specific counter, aggregated over all worker threads.
 
-    \param counter One of several values of an \ref Counter "enumerated type" identifying the available counters.
+    \note Counters are only available if \ref THERON_ENABLE_COUNTERS is defined as non-zero.
+
+    \param counter An integer index identifying the counter to be queried.
     \return Current value of the counter at the time of the call.
 
+    \see GetNumCounters
     \see GetPerThreadCounterValues
     \see ResetCounters
     */
-    uint32_t GetCounterValue(const Counter counter) const;
+    inline uint32_t GetCounterValue(const uint32_t counter) const;
 
     /**
     \brief Gets the current per-thread values of a specified event counter.
 
-    Each Framework maintains a set of \ref Counter "internal event counters".
-    This method gets the current value of the counter for each of the currently active worker threads.
+    Each Framework maintains a set of internal event counters.
+    This method gets the current value of a specific counter for each of the currently active worker threads.
 
-    \param counter One of several values of an \ref Counter "enumerated type" identifying the available counters.
+    \note Counters are only incremented if \ref THERON_ENABLE_COUNTERS is defined as non-zero.
+
+    \param counter An integer index identifying the counter to be queried.
     \param perThreadCounts Pointer to an array of uint32_t to be filled with per-thread counter values.
     \param maxCounts The size of the perThreadCounts array and hence the maximum number of values to fetch.
     \return The actual number of per-thread values fetched, matching the number of currently active worker threads.
@@ -584,7 +572,10 @@ public:
     \see GetCounterValue
     \see ResetCounters
     */
-    uint32_t GetPerThreadCounterValues(const Counter counter, uint32_t *const perThreadCounts, const uint32_t maxCounts) const;
+    inline uint32_t GetPerThreadCounterValues(
+        const uint32_t counter,
+        uint32_t *const perThreadCounts,
+        const uint32_t maxCounts) const;
 
     /**
     \brief Sets the fallback message handler executed for unhandled messages.
@@ -705,126 +696,21 @@ public:
         ObjectType *const actor,
         void (ObjectType::*handler)(const void *const data, const uint32_t size, const Address from));
 
-    /**
-    \brief Deprecated method provided for backwards compatibility.
-
-    \note In versions of Theron from 4.0 onwards, there is no need to use this method.
-    It is provided only for backwards compatibility.
-
-    In versions of Theron prior to 4.0, actors couldn't be constructed directly
-    in user code. Instead you had to ask a Framework to create one for you, using
-    the CreateActor method template. Instead of returning the actor itself,
-    CreateActor returned a <i>reference</i> to the actor in the form of an \ref ActorRef
-    object.
-
-    \code
-    // LEGACY CODE!
-    class MyActor : public Theron::Actor
-    {
-    };
-
-    int main()
-    {
-        Theron::Framework framework;
-        Theron::ActorRef actorRef(framework.CreateActor<MyActor>());
-    }
-    \endcode
-
-    In versions of Theron starting with 4.0, Actors are first-class citizens and
-    behave like vanilla C++ objects. They can be constructed directly with no
-    call to Framework::CreateActor. Once constructed they are referenced directly
-    by user code with no need for ActorRef proxy objects.
-
-    When writing new code, follow the new, simpler construction pattern where actors
-    are constructed directly and not referenced by ActorRefs:
-
-    \code
-    // New code
-    class MyActor : public Theron::Actor
-    {
-    public:
-
-        MyActor(Theron::Framework &framework) : Theron::Actor(framework)
-        {
-        }
-    };
-
-    int main()
-    {
-        Theron::Framework framework;
-        MyActor actor(framework);
-    }
-    \endcode
-    */
-    template <class ActorType>
-    ActorRef CreateActor();
-
-    /**
-    \brief Deprecated method provided for backwards compatibility.
-
-    \note In versions of Theron from 4.0 onwards, there is no need to use this method.
-    It is provided only for backwards compatibility.
-
-    In versions of Theron prior to 4.0, actors couldn't be constructed directly
-    in user code. Instead you had to ask a Framework to create one for you, using
-    the CreateActor method template. Instead of returning the actor itself,
-    CreateActor returned a <i>reference</i> to the actor in the form of an \ref ActorRef
-    object.
-
-    \code
-    // LEGACY CODE!
-    class MyActor : public Theron::Actor
-    {
-    public:
-
-        struct Parameters
-        {
-            int mSomeParameter;
-        }
-
-        MyActor(const Parameters &params)
-        {
-        }
-    };
-
-    int main()
-    {
-        Theron::Framework framework;
-        MyActor::Parameters params;
-        params.mSomeParameter = 0;
-        Theron::ActorRef actorRef(framework.CreateActor<MyActor>(params));
-    }
-    \endcode
-
-    When writing new code, follow the new, simpler construction pattern where actors
-    are constructed directly and not referenced by ActorRefs:
-
-    \code
-    // New code
-    class MyActor : public Theron::Actor
-    {
-    public:
-
-        MyActor(Theron::Framework &framework, const int mSomeParameter) : Theron::Actor(framework)
-        {
-        }
-    };
-
-    int main()
-    {
-        Theron::Framework framework;
-        MyActor actor(framework, 0);
-    }
-    \endcode
-    */
-    template <class ActorType>
-    ActorRef CreateActor(const typename ActorType::Parameters &params);
-
 private:
 
-    typedef Detail::ThreadPool<Detail::Processor, Detail::Processor::Context> ThreadPool;
-    typedef Detail::List<ThreadPool::ThreadContext> ContextList;
-    typedef Detail::CachingAllocator<32, Detail::SpinLock> MessageCache;
+    struct MessageCacheTraits
+    {
+        typedef Detail::SpinLock LockType;
+
+        struct THERON_PREALIGN(THERON_CACHELINE_ALIGNMENT) AlignType
+        {
+        } THERON_POSTALIGN(THERON_CACHELINE_ALIGNMENT);
+
+        static const uint32_t MAX_POOLS = 8;
+        static const uint32_t MAX_BLOCKS = 16;
+    };
+
+    typedef Detail::CachingAllocator<MessageCacheTraits> MessageCache;
 
     Framework(const Framework &other);
     Framework &operator=(const Framework &other);
@@ -841,9 +727,14 @@ private:
     void Release();
 
     /**
-    Gets the non-zero index of this framework, unique within the local process.
+    Allocates and initializes an owned scheduler object.
     */
-    inline uint32_t GetIndex() const;
+    Detail::IScheduler *CreateScheduler();
+
+    /**
+    Destroys a previously created scheduler object.
+    */
+    void DestroyScheduler(Detail::IScheduler *const scheduler);
 
     /**
     Registers a new actor in the directory and allocates a mailbox.
@@ -856,6 +747,21 @@ private:
     void DeregisterActor(Actor *const actor);
 
     /**
+    Helper method that sends messages.
+    */
+    inline bool SendInternal(
+        Detail::MailboxContext *const mailboxContext,
+        Detail::IMessage *const message,
+        Address address);
+
+    /**
+    Helper method that sends messages to entities in the local process.
+    */
+    static bool DeliverWithinLocalProcess(
+        Detail::IMessage *const message,
+        const Detail::Index &index);
+
+    /**
     Receives a message from another framework.
     */
     inline bool FrameworkReceive(
@@ -863,21 +769,11 @@ private:
         const Address &address);
 
     /**
-    Checks whether all work queues in the framework are empty.
+    Returns a pointer to the shared mailbox context not associated with a specific worker thread.
     */
-    bool QueuesEmpty() const;
+    inline Detail::MailboxContext *GetMailboxContext();
 
-    /**
-    Static entry point function for the manager thread.
-    This is a static function that calls the real entry point member function.
-    */
-    static void ManagerThreadEntryPoint(void *const context);
-
-    /**
-    Entry point member function for the manager thread.
-    */
-    void ManagerThreadProc();
-
+    Detail::StringPool::Ref mStringPoolRef;                 ///< Ensures that the StringPool is created.
     EndPoint *const mEndPoint;                              ///< Pointer to the network endpoint, if any, to which this framework is tied.
     const Parameters mParams;                               ///< Copy of parameters struct provided on construction.
     uint32_t mIndex;                                        ///< Non-zero index of this framework, unique within the local process.
@@ -885,20 +781,14 @@ private:
     Detail::Directory<Detail::Mailbox> mMailboxes;          ///< Per-framework mailbox array.
     Detail::FallbackHandlerCollection mFallbackHandlers;    ///< Registered message handlers run for unhandled messages.
     Detail::DefaultFallbackHandler mDefaultFallbackHandler; ///< Default handler for unhandled messages.
-    mutable Detail::SpinLock mSharedWorkQueueSpinLock;      ///< Protects the work queue shared by the worker threads.
     MessageCache mMessageAllocator;                         ///< Thread-safe per-framework cache of message memory blocks.
-    Detail::Processor::Context mProcessorContext;           ///< Per-framework processor context.
-    Detail::Thread mManagerThread;                          ///< Dynamically creates and destroys the worker threads.
-    bool mRunning;                                          ///< Flag used to terminate the manager thread.
-    Detail::Atomic::UInt32 mTargetThreadCount;              ///< Desired number of worker threads.
-    Detail::Atomic::UInt32 mPeakThreadCount;                ///< Peak number of worker threads.
-    Detail::Atomic::UInt32 mThreadCount;                    ///< Actual number of worker threads.
-    ContextList mThreadContexts;                            ///< List of worker thread context objects.
-    mutable Detail::SpinLock mThreadContextLock;            ///< Protects the thread context list.
+    Detail::MailboxContext mSharedMailboxContext;           ///< Shared per-framework mailbox context.
+    Detail::IScheduler *mScheduler;                         ///< Pointer to owned scheduler implementation.
 };
 
 
 inline Framework::Framework(const uint32_t threadCount) :
+  mStringPoolRef(),
   mEndPoint(0),
   mParams(threadCount),
   mIndex(0),
@@ -906,16 +796,9 @@ inline Framework::Framework(const uint32_t threadCount) :
   mMailboxes(),
   mFallbackHandlers(),
   mDefaultFallbackHandler(),
-  mSharedWorkQueueSpinLock(),
-  mMessageAllocator(AllocatorManager::Instance().GetAllocator()),
-  mProcessorContext(&mMailboxes, &mSharedWorkQueueSpinLock, &mFallbackHandlers, &mMessageAllocator),
-  mManagerThread(),
-  mRunning(false),
-  mTargetThreadCount(0),
-  mPeakThreadCount(0),
-  mThreadCount(0),
-  mThreadContexts(),
-  mThreadContextLock()
+  mMessageAllocator(AllocatorManager::GetCache()),
+  mSharedMailboxContext(),
+  mScheduler(0)
 {
     Detail::BuildDescriptor::Check();
 
@@ -924,6 +807,7 @@ inline Framework::Framework(const uint32_t threadCount) :
 
 
 inline Framework::Framework(const Parameters &params) :
+  mStringPoolRef(),
   mEndPoint(0),
   mParams(params),
   mIndex(0),
@@ -931,16 +815,9 @@ inline Framework::Framework(const Parameters &params) :
   mMailboxes(),
   mFallbackHandlers(),
   mDefaultFallbackHandler(),
-  mSharedWorkQueueSpinLock(),
-  mMessageAllocator(AllocatorManager::Instance().GetAllocator()),
-  mProcessorContext(&mMailboxes, &mSharedWorkQueueSpinLock, &mFallbackHandlers, &mMessageAllocator),
-  mManagerThread(),
-  mRunning(false),
-  mTargetThreadCount(0),
-  mPeakThreadCount(0),
-  mThreadCount(0),
-  mThreadContexts(),
-  mThreadContextLock()
+  mMessageAllocator(AllocatorManager::GetCache()),
+  mSharedMailboxContext(),
+  mScheduler(0)
 {
     Detail::BuildDescriptor::Check();
 
@@ -949,6 +826,7 @@ inline Framework::Framework(const Parameters &params) :
 
 
 inline Framework::Framework(EndPoint &endPoint, const char *const name, const Parameters &params) :
+  mStringPoolRef(),
   mEndPoint(&endPoint),
   mParams(params),
   mIndex(0),
@@ -956,16 +834,9 @@ inline Framework::Framework(EndPoint &endPoint, const char *const name, const Pa
   mMailboxes(),
   mFallbackHandlers(),
   mDefaultFallbackHandler(),
-  mSharedWorkQueueSpinLock(),
-  mMessageAllocator(AllocatorManager::Instance().GetAllocator()),
-  mProcessorContext(&mMailboxes, &mSharedWorkQueueSpinLock, &mFallbackHandlers, &mMessageAllocator),
-  mManagerThread(),
-  mRunning(false),
-  mTargetThreadCount(0),
-  mPeakThreadCount(0),
-  mThreadCount(0),
-  mThreadContexts(),
-  mThreadContextLock()
+  mMessageAllocator(AllocatorManager::GetCache()),
+  mSharedMailboxContext(),
+  mScheduler(0)
 {
     Detail::BuildDescriptor::Check();
 
@@ -994,12 +865,185 @@ THERON_FORCEINLINE bool Framework::Send(const ValueType &value, const Address &f
 
     // Call the message sending implementation using the processor context of the framework.
     // When messages are sent using Framework::Send there's no obvious worker thread.
-    return Detail::MessageSender::Send(
-        mEndPoint,
-        &mProcessorContext,
-        mIndex,
+    return SendInternal(
+        &mSharedMailboxContext,
         message,
         address);
+}
+
+
+THERON_FORCEINLINE void Framework::SetMaxThreads(const uint32_t count)
+{
+    mScheduler->SetMaxThreads(count);
+}
+
+
+THERON_FORCEINLINE void Framework::SetMinThreads(const uint32_t count)
+{
+    mScheduler->SetMinThreads(count);
+}
+
+
+THERON_FORCEINLINE uint32_t Framework::GetMaxThreads() const
+{
+    return mScheduler->GetMaxThreads();
+}
+
+
+THERON_FORCEINLINE uint32_t Framework::GetMinThreads() const
+{
+    return mScheduler->GetMinThreads();
+}
+
+
+THERON_FORCEINLINE uint32_t Framework::GetNumThreads() const
+{
+    return mScheduler->GetNumThreads();
+}
+
+
+THERON_FORCEINLINE uint32_t Framework::GetPeakThreads() const
+{
+    return mScheduler->GetPeakThreads();
+}
+
+
+THERON_FORCEINLINE uint32_t Framework::GetNumCounters() const
+{
+#if THERON_ENABLE_COUNTERS
+    return Detail::MAX_COUNTERS;
+#else
+    return 0;
+#endif
+}
+
+
+THERON_FORCEINLINE const char *Framework::GetCounterName(const uint32_t counter) const
+{
+    if (counter < Detail::MAX_COUNTERS)
+    {
+#if THERON_ENABLE_COUNTERS
+        switch (counter)
+        {
+            case Detail::COUNTER_MESSAGES_PROCESSED:        return "messages processed";
+            case Detail::COUNTER_YIELDS:                    return "thread yields";
+            case Detail::COUNTER_LOCAL_PUSHES:              return "mailboxes pushed to thread-local message queue";
+            case Detail::COUNTER_SHARED_PUSHES:             return "mailboxes pushed to per-framework message queue";
+            case Detail::COUNTER_MAILBOX_QUEUE_MAX:         return "maximum size of mailbox queue";
+            case Detail::COUNTER_QUEUE_LATENCY_LOCAL_MIN:   return "minimum observed latency of thread-local queue";
+            case Detail::COUNTER_QUEUE_LATENCY_LOCAL_MAX:   return "maximum observed latency of thread-local queue";
+            case Detail::COUNTER_QUEUE_LATENCY_SHARED_MIN:  return "minimum observed latency of per-framework queue";
+            case Detail::COUNTER_QUEUE_LATENCY_SHARED_MAX:  return "maximum observed latency of per-framework queue";
+            default: return "unknown";
+        }
+#endif
+    }
+
+    return "unknown";
+}
+
+
+THERON_FORCEINLINE void Framework::ResetCounters()
+{
+#if THERON_ENABLE_COUNTERS
+    mScheduler->ResetCounters();
+#endif
+}
+
+
+THERON_FORCEINLINE uint32_t Framework::GetCounterValue(const uint32_t counter) const
+{
+    if (counter < Detail::MAX_COUNTERS)
+    {
+#if THERON_ENABLE_COUNTERS
+        return mScheduler->GetCounterValue(counter);
+#endif
+    }
+
+    return 0;
+}
+
+
+THERON_FORCEINLINE uint32_t Framework::GetPerThreadCounterValues(
+    const uint32_t counter,
+    uint32_t *const perThreadCounts,
+    const uint32_t maxCounts) const
+{
+    if (counter < Detail::MAX_COUNTERS && perThreadCounts && maxCounts)
+    {
+#if THERON_ENABLE_COUNTERS
+        return mScheduler->GetPerThreadCounterValues(counter, perThreadCounts, maxCounts);
+#endif
+    }
+
+    return 0;
+}
+
+
+THERON_FORCEINLINE bool Framework::SendInternal(
+    Detail::MailboxContext *const mailboxContext,
+    Detail::IMessage *const message,
+    Address address)
+{
+    // Index of zero implies the actor is addressed only by name and may be remote.
+    if (address.mIndex.mUInt32 == 0)
+    {
+        const Detail::String &name(address.GetName());
+
+        THERON_ASSERT(!name.IsNull());
+        THERON_ASSERT_MSG(mEndPoint, "Sending messages addressed by name requires a Theron::EndPoint");
+
+        // Search the local endPoint for a mailbox with the given name.
+        // If there is a local match we fall through using the retrieved index, and we don't
+        // bother to push the message out onto the network, since names are globally unique.
+        if (!mEndPoint->Lookup(name, address.mIndex))
+        {
+            // If there isn't a local match we send the message out onto the network.
+            return mEndPoint->RequestSend(message, name);
+        }
+    }
+
+    // The address should have been resolved to a non-zero local index.
+    THERON_ASSERT(address.mIndex.mUInt32);
+
+    // Is the addressed entity in the local framework?
+    if (address.mIndex.mComponents.mFramework == mIndex)
+    {
+        // Message is addressed to an actor in the sending framework.
+        // Get a reference to the destination mailbox.
+        Detail::Mailbox &mailbox(mMailboxes.GetEntry(address.mIndex.mComponents.mIndex));
+
+        // Push the message into the mailbox and schedule the mailbox for processing
+        // if it was previously empty, so won't already be scheduled.
+        // The message will be destroyed by the worker thread that does the processing,
+        // even if it turns out that no actor is registered with the mailbox.
+        mailbox.Lock();
+
+        const bool schedule(mailbox.Empty());
+        mailbox.Push(message);
+
+        if (schedule)
+        {
+            mScheduler->Schedule(mailboxContext, &mailbox);
+        }
+
+        mailbox.Unlock();
+
+        return true;
+    }
+
+    // Message is addressed to a mailbox in the local process but not in the
+    // sending Framework. In this less common case we pay the hit of an extra call.
+    if (DeliverWithinLocalProcess(message, address.mIndex))
+    {
+        return true;
+    }
+
+    // Destroy the undelivered message.
+    mFallbackHandlers.Handle(message);
+    Detail::MessageCreator::Destroy(&mMessageAllocator, message);
+
+    return false;
 }
 
 
@@ -1009,12 +1053,16 @@ THERON_FORCEINLINE bool Framework::FrameworkReceive(
 {
     // Call the generic message sending function.
     // We use our own local context here because we're receiving the message.
-    return Detail::MessageSender::Send(
-        mEndPoint,
-        &mProcessorContext,
-        mIndex,
+    return SendInternal(
+        &mSharedMailboxContext,
         message,
         address);
+}
+
+
+THERON_FORCEINLINE Detail::MailboxContext *Framework::GetMailboxContext()
+{
+    return &mSharedMailboxContext;
 }
 
 
@@ -1033,116 +1081,6 @@ inline bool Framework::SetFallbackHandler(
     void (ObjectType::*handler)(const void *const data, const uint32_t size, const Address from))
 {
     return mFallbackHandlers.Set(handlerObject, handler);
-}
-
-
-THERON_FORCEINLINE uint32_t Framework::GetIndex() const
-{
-    return mIndex;
-}
-
-
-template <class ActorType>
-inline ActorRef Framework::CreateActor()
-{
-    IAllocator *const allocator(AllocatorManager::Instance().GetAllocator());
-
-    // The actor type may need to be allocated with non-default alignment.
-    const uint32_t actorSize(static_cast<uint32_t>(sizeof(ActorType)));
-    const uint32_t actorAlignment(Detail::ActorAlignment<ActorType>::ALIGNMENT);
-
-    void *const actorMemory(allocator->AllocateAligned(actorSize, actorAlignment));
-    if (actorMemory == 0)
-    {
-        return ActorRef();
-    }
-
-    // Get the address of the Actor baseclass using some cast trickery.
-    // Note that the Actor may not always be the first baseclass, so the address may differ!
-    // The static_cast takes the offset of the Actor baseclass within ActorType into account.
-    ActorType *const pretendActor(reinterpret_cast<ActorType *>(actorMemory));
-    Actor *const actorBase(static_cast<Actor *>(pretendActor));
-
-    // Register the actor in the registry while we construct it.
-    // This stores an entry passing the actor pointers to its memory block and owning framework.
-    void *const entryMemory(allocator->Allocate(sizeof(typename Detail::ActorRegistry::Entry)));
-    if (entryMemory == 0)
-    {
-        allocator->Free(actorMemory, actorSize);
-        return ActorRef();
-    }
-
-    typename Detail::ActorRegistry::Entry *const entry = new (entryMemory) typename Detail::ActorRegistry::Entry;
-
-    entry->mActor = actorBase;
-    entry->mFramework = this;
-    entry->mMemory = actorMemory;
-
-    Detail::ActorRegistry::Register(entry);
-    
-    // Construct the actor for real in the allocated memory.
-    // The Actor picks up the registered framework pointer in its default constructor.
-    // This relies on the user not incorrectly calling the non-default Actor constructor!
-    ActorType *const actor = new (actorMemory) ActorType();
-
-    // Deregister and free the entry.
-    Detail::ActorRegistry::Deregister(entry);
-
-    allocator->Free(entryMemory, sizeof(typename Detail::ActorRegistry::Entry));
-
-    return ActorRef(actor);
-}
-
-
-template <class ActorType>
-inline ActorRef Framework::CreateActor(const typename ActorType::Parameters &params)
-{
-    IAllocator *const allocator(AllocatorManager::Instance().GetAllocator());
-
-    // The actor type may need to be allocated with non-default alignment.
-    const uint32_t actorSize(static_cast<uint32_t>(sizeof(ActorType)));
-    const uint32_t actorAlignment(Detail::ActorAlignment<ActorType>::ALIGNMENT);
-
-    void *const actorMemory(allocator->AllocateAligned(actorSize, actorAlignment));
-    if (actorMemory == 0)
-    {
-        return ActorRef();
-    }
-
-    // Get the address of the Actor baseclass using some cast trickery.
-    // Note that the Actor may not always be the first baseclass, so the address may differ!
-    // The static_cast takes the offset of the Actor baseclass within ActorType into account.
-    ActorType *const pretendActor(reinterpret_cast<ActorType *>(actorMemory));
-    Actor *const actorBase(static_cast<Actor *>(pretendActor));
-
-    // Register the actor in the registry while we construct it.
-    // This stores an entry passing the actor pointers to its memory block and owning framework.
-    void *const entryMemory(allocator->Allocate(sizeof(typename Detail::ActorRegistry::Entry)));
-    if (entryMemory == 0)
-    {
-        allocator->Free(actorMemory, actorSize);
-        return ActorRef();
-    }
-
-    typename Detail::ActorRegistry::Entry *const entry = new (entryMemory) typename Detail::ActorRegistry::Entry;
-
-    entry->mActor = actorBase;
-    entry->mFramework = this;
-    entry->mMemory = actorMemory;
-
-    Detail::ActorRegistry::Register(entry);
-    
-    // Construct the actor for real in the allocated memory.
-    // The Actor picks up the registered framework pointer in its default constructor.
-    // This relies on the user not incorrectly calling the non-default Actor constructor!
-    ActorType *const actor = new (actorMemory) ActorType(params);
-
-    // Deregister and free the entry.
-    Detail::ActorRegistry::Deregister(entry);
-
-    allocator->Free(entryMemory, sizeof(typename Detail::ActorRegistry::Entry));
-
-    return ActorRef(actor);
 }
 
 

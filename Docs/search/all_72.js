@@ -6,5 +6,5 @@ var searchData=
   ['register_2eh',['Register.h',['../Register_8h.html',1,'']]],
   ['registerhandler',['RegisterHandler',['../classTheron_1_1Actor_a8d5ef774be6470b8a1e8159f93aac07a.html#a8d5ef774be6470b8a1e8159f93aac07a',1,'Theron::Actor::RegisterHandler()'],['../classTheron_1_1Receiver_a5f40851291b164ac7499550fe935431d.html#a5f40851291b164ac7499550fe935431d',1,'Theron::Receiver::RegisterHandler()']]],
   ['reset',['Reset',['../classTheron_1_1Receiver_a4cd17c1a51a4f01e66313c2fa0a0de44.html#a4cd17c1a51a4f01e66313c2fa0a0de44',1,'Theron::Receiver']]],
-  ['resetcounters',['ResetCounters',['../classTheron_1_1Framework_af8b253cdc19bbe3871fdd221571e0672.html#af8b253cdc19bbe3871fdd221571e0672',1,'Theron::Framework']]]
+  ['resetcounters',['ResetCounters',['../classTheron_1_1Framework_a071ed6177b2455401e8b24c84c11bb86.html#a071ed6177b2455401e8b24c84c11bb86',1,'Theron::Framework']]]
 ];

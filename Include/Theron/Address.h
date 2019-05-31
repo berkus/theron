@@ -13,17 +13,11 @@ Address object by which messages are addressed.
 #include <Theron/Defines.h>
 
 #include <Theron/Detail/Network/Index.h>
-#include <Theron/Detail/Network/String.h>
+#include <Theron/Detail/Strings/String.h>
 
 
 namespace Theron
 {
-
-
-namespace Detail
-{
-class MessageSender;
-}
 
 
 class EndPoint;
@@ -62,7 +56,6 @@ class Address
 {
 public:
 
-    friend class Detail::MessageSender;
     friend class EndPoint;
     friend class Framework;
     friend class Receiver;
@@ -88,9 +81,9 @@ public:
 
     \return The unique null address.
     */
-    inline static Address Null()
+    THERON_FORCEINLINE static const Address &Null()
     {
-        return Address();
+        return smNullAddress;
     }
 
     /**
@@ -350,6 +343,8 @@ private:
     {
         return mName;
     }
+
+    static Address smNullAddress;       ///< A single static instance of the null address.
 
     Detail::String mName;               ///< The string name of the addressed entity.
     Detail::Index mIndex;               ///< Cached local framework and index.

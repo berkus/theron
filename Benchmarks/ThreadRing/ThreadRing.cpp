@@ -60,16 +60,14 @@ private:
 
     inline void TokenHandler(const int &token, const Theron::Address /*from*/)
     {
-        int mssg(token);
-        Theron::Address to(mCaller);
-
         if (token > 0)
         {
-            mssg = token - 1;
-            to = mNext;
+            Send(token - 1, mNext);
         }
-
-        TailSend(mssg, to);
+        else
+        {
+            Send(token, mCaller);
+        }
     }
 
     Theron::Address mNext;
@@ -94,7 +92,6 @@ struct AddressCatcher
 
 int main(int argc, char *argv[])
 {
-    int numMessagesProcessed(0);
     AddressCatcher catcher;
 
     const int numHops = (argc > 1 && atoi(argv[1]) > 0) ? atoi(argv[1]) : 50000000;
@@ -138,17 +135,15 @@ int main(int argc, char *argv[])
         {
             delete members[index];
         }
-
-        numMessagesProcessed = framework.GetCounterValue(Theron::COUNTER_MESSAGES_PROCESSED);
     }
 
     timer.Stop();
 
-    printf("Processed %d messages in %.1f seconds\n", numMessagesProcessed, timer.Seconds());
+    printf("Processed in %.1f seconds\n", timer.Seconds());
     printf("Token stopped at entity '%d'\n", catcher.mAddress.AsInteger());
 
 #if THERON_ENABLE_DEFAULTALLOCATOR_CHECKS
-    Theron::IAllocator *const allocator(Theron::AllocatorManager::Instance().GetAllocator());
+    Theron::IAllocator *const allocator(Theron::AllocatorManager::GetAllocator());
     const int allocationCount(static_cast<Theron::DefaultAllocator *>(allocator)->GetAllocationCount());
     const int peakBytesAllocated(static_cast<Theron::DefaultAllocator *>(allocator)->GetPeakBytesAllocated());
     printf("Total number of allocations: %d calls\n", allocationCount);

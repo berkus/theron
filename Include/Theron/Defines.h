@@ -31,7 +31,7 @@ used to name official releases. Its definition can't be overridden by the user.
 */
 
 
-#define THERON_VERSION "5.01"
+#define THERON_VERSION "6.00"
 
 
 /**
@@ -538,6 +538,33 @@ preprocessor settings in Visual Studio.
 
 #if !defined(THERON_ENABLE_BUILD_CHECKS)
 #define THERON_ENABLE_BUILD_CHECKS 1
+#endif
+
+
+/**
+\def THERON_ENABLE_COUNTERS
+
+\brief Controls availability of per-framework counters that record the occurrence of scheduling events.
+
+This define controls the availability of a set of per-framework event counters.
+If the value of the define is non-zero then the counters are incremented when the counted
+events occur. If the value of the define is zero then the counters are not incremented, and cannot
+be queried. The incrementing of the counters incurs some small overhead that makes
+a measurable difference in synthetic benchmarks, but is probably not significant in real code.
+
+Defaults to 0 (disabled). Define this as 1 to enable counters.
+
+The default definition can be overridden by defining it globally in the build - either
+via the makefile command line options, on the GCC command line using -D, or in the project
+preprocessor settings in Visual Studio.
+
+\see Theron::Framework::GetNumCounters
+\see Theron::Framework::GetCounterValue
+*/
+
+
+#if !defined(THERON_ENABLE_COUNTERS)
+#define THERON_ENABLE_COUNTERS 0
 #endif
 
 

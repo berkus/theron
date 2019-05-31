@@ -38,10 +38,15 @@
 # Alternatively you may wish to copy your built or downloaded libraries to these paths.
 #
 
-BOOST_INCLUDE_PATH = /usr/include/
-BOOST_RELEASE_LIB_PATH = /usr/lib/
-BOOST_DEBUG_LIB_PATH = /usr/lib/debug/usr/lib/
+BOOST_INCLUDE_PATH = /home/amason/boost_1_49_0/
+BOOST_RELEASE_LIB_PATH = /home/amason/boost_1_49_0/stage/lib/
+BOOST_DEBUG_LIB_PATH = /home/amason/boost_1_49_0/stage/lib/
 BOOST_LIB = boost_thread
+
+#BOOST_INCLUDE_PATH = /usr/include/
+#BOOST_RELEASE_LIB_PATH = /usr/lib/
+#BOOST_DEBUG_LIB_PATH = /usr/lib/debug/usr/lib/
+#BOOST_LIB = boost_thread
 
 XS_INCLUDE_PATH = /usr/include/
 XS_RELEASE_LIB_PATH = /usr/lib/
@@ -64,7 +69,7 @@ INCLUDE_FLAGS = -IInclude -IInclude/External
 BUILD = Build
 BIN = Bin
 LIB = Lib
-LIB_FLAGS =
+LIB_FLAGS = -lrt
 ARFLAGS = r
 
 #
@@ -179,6 +184,7 @@ TESTS = ${BIN}/Tests
 THREADRING = ${BIN}/ThreadRing
 PARALLELTHREADRING = ${BIN}/ParallelThreadRing
 PINGPONG = ${BIN}/PingPong
+PRIMEFACTORS = ${BIN}/PrimeFactors
 
 ALIGNMENT = ${BIN}/Alignment
 CUSTOMALLOCATORS = ${BIN}/CustomAllocators
@@ -212,7 +218,8 @@ tests: library ${TESTS}
 benchmarks: library \
 	${THREADRING} \
 	${PARALLELTHREADRING} \
-	${PINGPONG}
+	${PINGPONG} \
+	${PRIMEFACTORS}
 
 tutorial: library \
 	${ALIGNMENT} \
@@ -241,11 +248,9 @@ clean:
 
 
 THERON_HEADERS = \
-	Include/Theron/Detail/Alignment/ActorAlignment.h \
 	Include/Theron/Detail/Alignment/MessageAlignment.h \
 	Include/Theron/Detail/Allocators/CachingAllocator.h \
 	Include/Theron/Detail/Allocators/Pool.h \
-	Include/Theron/Detail/Allocators/TrivialAllocator.h \
 	Include/Theron/Detail/Containers/List.h \
 	Include/Theron/Detail/Containers/Map.h \
 	Include/Theron/Detail/Containers/Queue.h \
@@ -269,26 +274,39 @@ THERON_HEADERS = \
 	Include/Theron/Detail/Handlers/MessageHandlerCast.h \
 	Include/Theron/Detail/Handlers/ReceiverHandler.h \
     Include/Theron/Detail/Handlers/ReceiverHandlerCast.h \
-	Include/Theron/Detail/Legacy/ActorRegistry.h \
 	Include/Theron/Detail/Mailboxes/Mailbox.h \
-	Include/Theron/Detail/MailboxProcessor/Processor.h \
-	Include/Theron/Detail/MailboxProcessor/ThreadPool.h \
-	Include/Theron/Detail/MailboxProcessor/WorkItem.h \
-	Include/Theron/Detail/MailboxProcessor/WorkQueue.h \
+	Include/Theron/Detail/Scheduler/BlockingMonitor.h \
+	Include/Theron/Detail/Scheduler/Counting.h \
+	Include/Theron/Detail/Scheduler/IScheduler.h \
+	Include/Theron/Detail/Scheduler/MailboxContext.h \
+	Include/Theron/Detail/Scheduler/MailboxProcessor.h \
+	Include/Theron/Detail/Scheduler/MailboxQueue.h \
+	Include/Theron/Detail/Scheduler/NonBlockingMonitor.h \
+	Include/Theron/Detail/Scheduler/Scheduler.h \
+	Include/Theron/Detail/Scheduler/SchedulerHints.h \
+	Include/Theron/Detail/Scheduler/ThreadPool.h \
+	Include/Theron/Detail/Scheduler/WorkerContext.h \
+	Include/Theron/Detail/Scheduler/YieldImplementation.h \
+	Include/Theron/Detail/Scheduler/YieldPolicy.h \
 	Include/Theron/Detail/Messages/IMessage.h \
 	Include/Theron/Detail/Messages/Message.h \
 	Include/Theron/Detail/Messages/MessageCast.h \
 	Include/Theron/Detail/Messages/MessageCreator.h \
-	Include/Theron/Detail/Messages/MessageSender.h \
+	Include/Theron/Detail/Messages/MessageSize.h \
 	Include/Theron/Detail/Messages/MessageTraits.h \
-	Include/Theron/Detail/Network/Hash.h \
 	Include/Theron/Detail/Network/Index.h \
 	Include/Theron/Detail/Network/MessageFactory.h \
 	Include/Theron/Detail/Network/NameGenerator.h \
 	Include/Theron/Detail/Network/NameMap.h \
 	Include/Theron/Detail/Network/NetworkMessage.h \
-	Include/Theron/Detail/Network/String.h \
+	Include/Theron/Detail/Strings/String.h \
+	Include/Theron/Detail/Strings/StringHash.h \
+	Include/Theron/Detail/Strings/StringPool.h \
 	Include/Theron/Detail/Threading/Atomic.h \
+	Include/Theron/Detail/Threading/Clock.h \
+	Include/Theron/Detail/Threading/Condition.h \
+	Include/Theron/Detail/Threading/Lock.h \
+	Include/Theron/Detail/Threading/Mutex.h \
 	Include/Theron/Detail/Threading/SpinLock.h \
 	Include/Theron/Detail/Threading/Thread.h \
 	Include/Theron/Detail/Threading/Utils.h \
@@ -298,14 +316,12 @@ THERON_HEADERS = \
 	Include/Theron/Detail/Transport/OutputMessage.h \
 	Include/Theron/Detail/Transport/OutputSocket.h \
 	Include/Theron/Actor.h \
-	Include/Theron/ActorRef.h \
 	Include/Theron/Address.h \
 	Include/Theron/Align.h \
 	Include/Theron/AllocatorManager.h \
 	Include/Theron/Assert.h \
 	Include/Theron/BasicTypes.h \
 	Include/Theron/Catcher.h \
-	Include/Theron/Counters.h \
 	Include/Theron/DefaultAllocator.h \
 	Include/Theron/Defines.h \
 	Include/Theron/Framework.h \
@@ -313,37 +329,38 @@ THERON_HEADERS = \
 	Include/Theron/EndPoint.h \
 	Include/Theron/Receiver.h \
 	Include/Theron/Register.h \
-	Include/Theron/Theron.h
+	Include/Theron/Theron.h \
+	Include/Theron/YieldStrategy.h
 
 THERON_SOURCES = \
 	Theron/Actor.cpp \
-	Theron/ActorRef.cpp \
-	Theron/ActorRegistry.cpp \
+	Theron/Address.cpp \
 	Theron/AllocatorManager.cpp \
 	Theron/BuildDescriptor.cpp \
+	Theron/Clock.cpp \
 	Theron/DefaultHandlerCollection.cpp \
 	Theron/EndPoint.cpp \
 	Theron/FallbackHandlerCollection.cpp \
 	Theron/Framework.cpp \
 	Theron/HandlerCollection.cpp \
-	Theron/MessageSender.cpp \
-	Theron/Processor.cpp \
-	Theron/Receiver.cpp
+	Theron/Receiver.cpp \
+	Theron/StringPool.cpp \
+	Theron/YieldPolicy.cpp
 
 THERON_OBJECTS = \
 	${BUILD}/Actor.o \
-	${BUILD}/ActorRef.o \
-	${BUILD}/ActorRegistry.o \
+	${BUILD}/Address.o \
 	${BUILD}/AllocatorManager.o \
 	${BUILD}/BuildDescriptor.o \
+	${BUILD}/Clock.o \
 	${BUILD}/DefaultHandlerCollection.o \
 	${BUILD}/EndPoint.o \
 	${BUILD}/FallbackHandlerCollection.o \
 	${BUILD}/Framework.o \
 	${BUILD}/HandlerCollection.o \
-	${BUILD}/MessageSender.o \
-	${BUILD}/Processor.o \
-	${BUILD}/Receiver.o
+	${BUILD}/Receiver.o \
+	${BUILD}/StringPool.o \
+	${BUILD}/YieldPolicy.o
 
 $(THERON_LIB): $(THERON_OBJECTS)
 	${AR} ${ARFLAGS} ${THERON_LIB} $(THERON_OBJECTS)
@@ -351,17 +368,17 @@ $(THERON_LIB): $(THERON_OBJECTS)
 ${BUILD}/Actor.o: Theron/Actor.cpp ${THERON_HEADERS}
 	$(CC) $(CFLAGS) Theron/Actor.cpp -o ${BUILD}/Actor.o ${INCLUDE_FLAGS}
 
-${BUILD}/ActorRef.o: Theron/ActorRef.cpp ${THERON_HEADERS}
-	$(CC) $(CFLAGS) Theron/ActorRef.cpp -o ${BUILD}/ActorRef.o ${INCLUDE_FLAGS}
-
-${BUILD}/ActorRegistry.o: Theron/ActorRegistry.cpp ${THERON_HEADERS}
-	$(CC) $(CFLAGS) Theron/ActorRegistry.cpp -o ${BUILD}/ActorRegistry.o ${INCLUDE_FLAGS}
+${BUILD}/Address.o: Theron/Address.cpp ${THERON_HEADERS}
+	$(CC) $(CFLAGS) Theron/Address.cpp -o ${BUILD}/Address.o ${INCLUDE_FLAGS}
 
 ${BUILD}/AllocatorManager.o: Theron/AllocatorManager.cpp ${THERON_HEADERS}
 	$(CC) $(CFLAGS) Theron/AllocatorManager.cpp -o ${BUILD}/AllocatorManager.o ${INCLUDE_FLAGS}
 
 ${BUILD}/BuildDescriptor.o: Theron/BuildDescriptor.cpp ${THERON_HEADERS}
 	$(CC) $(CFLAGS) Theron/BuildDescriptor.cpp -o ${BUILD}/BuildDescriptor.o ${INCLUDE_FLAGS}
+
+${BUILD}/Clock.o: Theron/Clock.cpp ${THERON_HEADERS}
+	$(CC) $(CFLAGS) Theron/Clock.cpp -o ${BUILD}/Clock.o ${INCLUDE_FLAGS}
 
 ${BUILD}/DefaultHandlerCollection.o: Theron/DefaultHandlerCollection.cpp ${THERON_HEADERS}
 	$(CC) $(CFLAGS) Theron/DefaultHandlerCollection.cpp -o ${BUILD}/DefaultHandlerCollection.o ${INCLUDE_FLAGS}
@@ -378,15 +395,14 @@ ${BUILD}/Framework.o: Theron/Framework.cpp ${THERON_HEADERS}
 ${BUILD}/HandlerCollection.o: Theron/HandlerCollection.cpp ${THERON_HEADERS}
 	$(CC) $(CFLAGS) Theron/HandlerCollection.cpp -o ${BUILD}/HandlerCollection.o ${INCLUDE_FLAGS}
 
-${BUILD}/MessageSender.o: Theron/MessageSender.cpp ${THERON_HEADERS}
-	$(CC) $(CFLAGS) Theron/MessageSender.cpp -o ${BUILD}/MessageSender.o ${INCLUDE_FLAGS}
-
-${BUILD}/Processor.o: Theron/Processor.cpp ${THERON_HEADERS}
-	$(CC) $(CFLAGS) Theron/Processor.cpp -o ${BUILD}/Processor.o ${INCLUDE_FLAGS}
-
 ${BUILD}/Receiver.o: Theron/Receiver.cpp ${THERON_HEADERS}
 	$(CC) $(CFLAGS) Theron/Receiver.cpp -o ${BUILD}/Receiver.o ${INCLUDE_FLAGS}
 
+${BUILD}/StringPool.o: Theron/StringPool.cpp ${THERON_HEADERS}
+	$(CC) $(CFLAGS) Theron/StringPool.cpp -o ${BUILD}/StringPool.o ${INCLUDE_FLAGS}
+
+${BUILD}/YieldPolicy.o: Theron/YieldPolicy.cpp ${THERON_HEADERS}
+	$(CC) $(CFLAGS) Theron/YieldPolicy.cpp -o ${BUILD}/YieldPolicy.o ${INCLUDE_FLAGS}
 
 #
 # Tests
@@ -401,7 +417,6 @@ TESTS_HEADERS = \
 	Tests/TestFramework/TestManager.h \
 	Tests/TestFramework/TestSuite.h \
 	Tests/TestSuites/FeatureTestSuite.h \
-	Tests/TestSuites/LegacyTestSuite.h \
 	Tests/TestSuites/NetworkTestSuite.h
 
 TESTS_SOURCES = \
@@ -457,6 +472,17 @@ ${PINGPONG}: $(THERON_LIB) ${PINGPONG_OBJECTS}
 
 ${BUILD}/PingPong.o: Benchmarks/PingPong/PingPong.cpp ${THERON_HEADERS}
 	$(CC) $(CFLAGS) Benchmarks/PingPong/PingPong.cpp -o ${BUILD}/PingPong.o ${INCLUDE_FLAGS}
+
+
+# PrimeFactors benchmark
+PRIMEFACTORS_SOURCES = Benchmarks/PrimeFactors/PrimeFactors.cpp
+PRIMEFACTORS_OBJECTS = ${BUILD}/PrimeFactors.o
+
+${PRIMEFACTORS}: $(THERON_LIB) ${PRIMEFACTORS_OBJECTS}
+	$(CC) $(LDFLAGS) ${PRIMEFACTORS_OBJECTS} $(THERON_LIB) -o ${PRIMEFACTORS} ${LIB_FLAGS}
+
+${BUILD}/PrimeFactors.o: Benchmarks/PrimeFactors/PrimeFactors.cpp ${THERON_HEADERS}
+	$(CC) $(CFLAGS) Benchmarks/PrimeFactors/PrimeFactors.cpp -o ${BUILD}/PrimeFactors.o ${INCLUDE_FLAGS}
 
 
 #

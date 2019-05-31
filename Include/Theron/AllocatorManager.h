@@ -5,7 +5,7 @@
 
 /**
 \file AllocatorManager.h
-Manager for allocators used within Theron.
+Static manager class for allocators used within Theron.
 */
 
 
@@ -14,23 +14,29 @@ Manager for allocators used within Theron.
 #include <Theron/Defines.h>
 #include <Theron/IAllocator.h>
 
+#include <Theron/Detail/Allocators/CachingAllocator.h>
+#include <Theron/Detail/Threading/SpinLock.h>
+
+
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning (disable:4324)  // structure was padded due to __declspec(align())
+#endif //_MSC_VER
+
 
 namespace Theron
 {
 
 
 /**
-\brief Singleton class that manages allocators for use by Theron.
+\brief Static class that manages allocators for use by Theron.
 
-This class is a singleton, and its single instance can be accessed using the
-static \ref Instance method on the class.
-
-Non-static \ref SetAllocator and \ref GetAllocator methods on the singleton instance
+Static \ref SetAllocator and \ref GetAllocator methods on the class
 allow the allocator used by Theron to be set and retrieved. Setting the allocator
 replaces the \ref DefaultAllocator, which is used if no custom allocator is explicitly
 set. The \ref GetAllocator method returns a pointer to the currently set allocator,
-which is either the allocator set previously using \ref SetAllocator or the \ref
-DefaultAllocator, if none has been set.
+which is either the allocator set previously using \ref SetAllocator or an instance
+of \ref DefaultAllocator, if none has been set.
 
 \code
 class MyAllocator : public Theron::IAllocator
@@ -43,29 +49,22 @@ public:
     virtual void *Allocate(const SizeType size);
     virtual void *AllocateAligned(const SizeType size, const SizeType alignment);
     virtual void Free(void *const memory);
+    virtual void Free(void *const memory, const SizeType size);
 };
 
 MyAllocator allocator;
-Theron::AllocatorManager::Instance().SetAllocator(&allocator);
+Theron::AllocatorManager::SetAllocator(&allocator);
 \endcode
 
 \note The \ref SetAllocator method can be called at most once, at application start.
 If the \ref DefaultAllocator is replaced with a custom allocator then it must be
-replaced at application start, before any Theron objects (\ref Framework "frameworks",
-\ref Actor "actors" or \ref Receiver "receivers") are constructed. \ref GetAllocator
-can be called any number of times, both before and after a call to \ref SetAllocator.
+replaced at application start, before any Theron objects (\ref EndPoint "endpoints",
+\ref Framework "frameworks", \ref Actor "actors" or \ref Receiver "receivers") are constructed.
+\ref GetAllocator can be called any number of times after \ref SetAllocator is called.
 */
 class AllocatorManager
 {
 public:
-
-    /**
-    \brief Returns a reference to the AllocatorManager singleton instance.
-    */
-    THERON_FORCEINLINE static AllocatorManager &Instance()
-    {
-        return smInstance;
-    }
 
     /**
     \brief Sets the allocator used for internal allocations, replacing the default allocator.
@@ -80,28 +79,20 @@ public:
 
     \code
     MyAllocator allocator;
-    Theron::AllocatorManager::Instance().SetAllocator(&allocator);
+    Theron::AllocatorManager::SetAllocator(&allocator);
     \endcode
     
-    \note This method should be called once at most, and before any other Theron activity.
+    \note This method can't be called at static construction time.
 
     \see GetAllocator
     */
-    inline void SetAllocator(IAllocator *const allocator)
-    {
-        // This method should only be called once, at start of day.
-        THERON_ASSERT_MSG(mAllocator == &mDefaultAllocator, "SetAllocator can only be called once!");
-        THERON_ASSERT_MSG(mDefaultAllocator.GetBytesAllocated() == 0, "SetAllocator can only be called before Framework construction");
-        THERON_ASSERT(allocator != 0);
-
-        mAllocator = allocator;
-    }
+    static void SetAllocator(IAllocator *const allocator);
 
     /**
     \brief Gets a pointer to the general allocator currently in use by Theron.
 
     \code
-    Theron::IAllocator *const allocator = Theron::AllocatorManager::Instance().GetAllocator();
+    Theron::IAllocator *const allocator = Theron::AllocatorManager::GetAllocator();
     Theron::DefaultAllocator *const defaultAllocator = dynamic_cast<Theron::DefaultAllocator *>(allocator);
 
     if (defaultAllocator)
@@ -112,33 +103,61 @@ public:
 
     \see SetAllocator
     */
-    THERON_FORCEINLINE IAllocator *GetAllocator() const
+    THERON_FORCEINLINE static IAllocator *GetAllocator()
     {
-        return mAllocator;
+        return smCache.GetAllocator();
+    }
+
+    /**
+    \brief Gets a pointer to the caching allocator that wraps the general allocator.
+
+    Theron caches allocations internally using a caching allocator that wraps the low-level general allocator.
+    The caching can't be replaced.
+
+    \note Although this method is public, calling it is not recommended since it is really
+    an implementation detail and may change in future releases. It would be made private if
+    that weren't made difficult by the need to forward-declare loads of other classes in
+    order to declare them friends of AllocatorManager.
+    */
+    THERON_FORCEINLINE static IAllocator *GetCache()
+    {
+        return &smCache;
     }
 
 private:
 
-    /**
-    Default constructor. Private, since the AllocatorManager is a singleton class.
-    */
-    inline AllocatorManager() :
-      mDefaultAllocator(),
-      mAllocator(&mDefaultAllocator)
+    struct CacheTraits
+    {
+        typedef Detail::SpinLock LockType;
+
+        struct THERON_PREALIGN(THERON_CACHELINE_ALIGNMENT) AlignType
+        {
+        } THERON_POSTALIGN(THERON_CACHELINE_ALIGNMENT);
+
+        static const uint32_t MAX_POOLS = 8;
+        static const uint32_t MAX_BLOCKS = 16;
+    };
+
+    typedef Detail::CachingAllocator<CacheTraits> CacheType;
+
+    THERON_FORCEINLINE AllocatorManager()
     {
     }
 
     AllocatorManager(const AllocatorManager &other);
     AllocatorManager &operator=(const AllocatorManager &other);
 
-    static AllocatorManager smInstance;         ///< The single, static instance.
-
-    DefaultAllocator mDefaultAllocator;         ///< Default allocator used if no user allocator is set.
-    IAllocator *mAllocator;                     ///< Pointer to a general allocator for use in internal allocations.
+    static DefaultAllocator smDefaultAllocator;     ///< Default allocator used if no user allocator is set.
+    static CacheType smCache;                       ///< Cache that caches allocations from the actual allocator.
 };
 
 
 } // namespace Theron
+
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif //_MSC_VER
 
 
 #endif // THERON_ALLOCATORMANAGER_H

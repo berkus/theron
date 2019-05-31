@@ -24,7 +24,7 @@
 
 #include <thread>
 
-#elif defined(THERON_POSIX)
+#elif THERON_POSIX
 
 #include <pthread.h>
 #include <sched.h>  
@@ -120,6 +120,30 @@ public:
     */
     inline static bool SetThreadAffinity(const uint32_t nodeMask, const uint32_t processorMask);
 
+    /**
+    Hints to the OS the relative priority of the current thread, relative to other threads.
+
+    The legal values are -1.0f to +1.0f, with zero indicating "normal" priority.
+    */
+    inline static bool SetThreadRelativePriority(const float relativePriority);
+
+    /**
+    Allocate memory affinitized to a specified NUMA node.
+    
+    \param node a integer index for a particular NUMA node
+    \param size the memory allocation size in bytes
+    \return the pointer to memory or NULL if operation not available
+    */
+    inline static void *AllocOnNode(const uint32_t node, const size_t size);
+
+    /**
+    Free memory allocated by AllocOnNode().
+
+    \param mem a pointer to the allocated memory
+    \param size the memory allocation size in bytes
+    */
+    inline static void FreeOnNode(void *mem, const size_t size);
+
 private:
 
     Utils(const Utils &other);
@@ -146,13 +170,9 @@ inline void Utils::Backoff(uint32_t &backoff)
     {
         YieldToLocalThread();
     }
-    else if (backoff < 24)
-    {
-        YieldToAnyThread();
-    }
     else
     {
-        SleepThread(1UL);
+        YieldToAnyThread();
     }
 }
 
@@ -160,13 +180,26 @@ inline void Utils::Backoff(uint32_t &backoff)
 THERON_FORCEINLINE void Utils::YieldToHyperthread()
 {
 
+    // The intention of this code is to indicate to the scheduler
+    // that the thread is not doing useful work, so another thread
+    // able to run on the same core should be given priority.
+    // It's intended to evaluate to a lightweight NOP instruction
+    // rather than a heavyweight system call. On Windows the
+    // YieldProcessor() function can be called to this effect;
+    // on other systems we try to issue an explicit NOP or pause
+    // instruction - but only some architectures are implemented.
+
 #if THERON_WINDOWS
 
     YieldProcessor();
 
 #elif THERON_GCC
 
-    __asm__ __volatile__ ("pause");
+#ifdef __arm__
+    __asm__ __volatile__ ("NOP");
+#elif __X86_64__
+    __asm__ __volatile__("pause");
+#endif
 
 #endif
 
@@ -188,7 +221,7 @@ THERON_FORCEINLINE void Utils::YieldToLocalThread()
 
     std::this_thread::yield();
 
-#elif defined(THERON_POSIX)
+#elif THERON_POSIX
 
     sched_yield();
 
@@ -212,7 +245,7 @@ THERON_FORCEINLINE void Utils::YieldToAnyThread()
 
     std::this_thread::yield();
 
-#elif defined(THERON_POSIX)
+#elif THERON_POSIX
 
     sched_yield();
 
@@ -237,7 +270,7 @@ THERON_FORCEINLINE void Utils::SleepThread(const uint32_t milliseconds)
 
     std::this_thread::sleep_for(std::chrono::microseconds(milliseconds * 1000));
 
-#elif defined(THERON_POSIX)
+#elif THERON_POSIX
 
     timespec req;
     req.tv_sec = 0;
@@ -441,6 +474,131 @@ numa_cleanup_and_done:
 #endif // THERON_NUMA
 
     return false;
+}
+
+
+// Implementation based on code from numanuma by guruofquality.
+inline bool Utils::SetThreadRelativePriority(const float priority)
+{
+    if (priority < -1.0f || priority > 1.0f)
+    {
+        return false;
+    }
+
+#if THERON_WINDOWS
+
+    int threadPriority = THREAD_PRIORITY_NORMAL;
+
+    if (priority > 0.0f)
+    {
+        if      (priority > +0.75f) threadPriority = THREAD_PRIORITY_TIME_CRITICAL;
+        else if (priority > +0.50f) threadPriority = THREAD_PRIORITY_HIGHEST;
+        else if (priority > +0.25f) threadPriority = THREAD_PRIORITY_ABOVE_NORMAL;
+        else                        threadPriority = THREAD_PRIORITY_NORMAL;
+    }
+    else
+    {
+        if      (priority < -0.75f) threadPriority = THREAD_PRIORITY_IDLE;
+        else if (priority < -0.50f) threadPriority = THREAD_PRIORITY_LOWEST;
+        else if (priority < -0.25f) threadPriority = THREAD_PRIORITY_BELOW_NORMAL;
+        else                        threadPriority = THREAD_PRIORITY_NORMAL;
+    }
+
+    if (SetThreadPriority(GetCurrentThread(), threadPriority))
+    {
+        return true;
+    }
+
+#elif THERON_POSIX
+
+    struct sched_param sp;
+    sp.sched_priority = 0;
+
+    if (priority <= 0.0f)
+    {
+        const int policy(SCHED_OTHER);
+        if (pthread_setschedparam(pthread_self(), policy, &sp) == 0)
+        {
+            return true;
+        }
+    }
+    else
+    {
+        const int policy(SCHED_RR);
+        const int minPriority(sched_get_priority_min(policy));
+        const int maxPriority(sched_get_priority_max(policy));
+
+        if (minPriority == -1 || maxPriority == -1)
+        {
+            return false;
+        }
+
+        // Scale linearly between minimum and maximum allowed static priority.
+        sp.sched_priority = minPriority + (int)(priority * (maxPriority - minPriority));
+        if (pthread_setschedparam(pthread_self(), policy, &sp) == 0)
+        {
+            return true;
+        }
+    }
+
+#endif
+
+    return false;
+}
+
+
+inline void *Utils::AllocOnNode(const uint32_t node, const size_t size)
+{
+
+#if THERON_NUMA
+
+#if THERON_WINDOWS
+
+    #if _WIN32_WINNT >= 0x0600
+    return VirtualAllocExNuma(
+        GetCurrentProcess(),
+        NULL,
+        size,
+        MEM_RESERVE | MEM_COMMIT,
+        PAGE_READWRITE,
+        node
+    );
+    #else
+    return NULL;
+    #endif
+
+#elif THERON_GCC
+
+    if ((numa_available() < 0))
+    {
+        return NULL;
+    }
+
+    return numa_alloc_onnode(size, node);
+
+#endif
+
+#endif // THERON_NUMA
+
+    return NULL;
+}
+
+
+inline void Utils::FreeOnNode(void *mem, const size_t size)
+{
+#if THERON_NUMA
+
+#if THERON_WINDOWS
+
+    VirtualFree(mem, size, MEM_RELEASE);
+
+#elif THERON_GCC
+
+    numa_free(mem, size);
+
+#endif
+
+#endif // THERON_NUMA
 }
 
 

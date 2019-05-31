@@ -10,7 +10,6 @@
 #include "TestFramework/TestManager.h"
 
 #include "TestSuites/FeatureTestSuite.h"
-#include "TestSuites/LegacyTestSuite.h"
 
 #if THERON_XS
 #include "TestSuites/NetworkTestSuite.h"
@@ -19,7 +18,6 @@
 
 /// Static instantiations of the test suites.
 Tests::FeatureTestSuite featureTestSuite;
-Tests::LegacyTestSuite legacyTestSuite;
 
 #if THERON_XS
 Tests::NetworkTestSuite networkTestSuite;
@@ -76,10 +74,15 @@ int main(int argc, char *argv[])
 
     // Run all the tests, report the result, print any errors.
     bool allPassed(true);
+    printf("Running tests %d time(s). Use -count to set count, -verbose to turn on output.\n", count);
 
     for (int iteration(0); iteration < count; ++iteration)
     {
-        printf("Iteration %d\n", iteration);
+        if (count > 1)
+        {
+            printf("Iteration %d ...\n", iteration);
+        }
+
         allPassed = allPassed && TestManager::Instance()->RunTests(verbose);
     }
 

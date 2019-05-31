@@ -91,15 +91,16 @@ inline bool DefaultHandlerCollection::Set(void (ActorType::*handler)(const Addre
 {
     typedef DefaultHandler<ActorType> MessageHandlerType;
 
-    IAllocator *const allocator(AllocatorManager::Instance().GetAllocator());
+    IAllocator *const allocator(AllocatorManager::GetCache());
 
     mHandlersDirty = true;
 
     // Destroy any previously set new handler.
+    // Note that all handler objects are the same size.
     if (mNewHandler)
     {
         mNewHandler->~IDefaultHandler();
-        allocator->Free(mNewHandler);
+        allocator->Free(mNewHandler, sizeof(MessageHandlerType));
         mNewHandler = 0;
     }
 
@@ -125,15 +126,16 @@ inline bool DefaultHandlerCollection::Set(void (ActorType::*handler)(const void 
 {
     typedef BlindDefaultHandler<ActorType> MessageHandlerType;
 
-    IAllocator *const allocator(AllocatorManager::Instance().GetAllocator());
+    IAllocator *const allocator(AllocatorManager::GetCache());
 
     mHandlersDirty = true;
 
     // Destroy any previously set new handler.
+    // Note that all handler objects are the same size.
     if (mNewHandler)
     {
         mNewHandler->~IDefaultHandler();
-        allocator->Free(mNewHandler);
+        allocator->Free(mNewHandler, sizeof(MessageHandlerType));
         mNewHandler = 0;
     }
 

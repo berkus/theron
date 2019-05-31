@@ -19,6 +19,7 @@ var searchData=
   ['theron_5fdefine_5fregistered_5fmessage',['THERON_DEFINE_REGISTERED_MESSAGE',['../Register_8h_a58d283d4e902a4cb14a4ebae5de25a1e.html#a58d283d4e902a4cb14a4ebae5de25a1e',1,'Register.h']]],
   ['theron_5fenable_5fasserts',['THERON_ENABLE_ASSERTS',['../Defines_8h_a266c44b69e6490887e5829719521f61d.html#a266c44b69e6490887e5829719521f61d',1,'Defines.h']]],
   ['theron_5fenable_5fbuild_5fchecks',['THERON_ENABLE_BUILD_CHECKS',['../Defines_8h_a2ac733010148bef3ac833900ac1d6d79.html#a2ac733010148bef3ac833900ac1d6d79',1,'Defines.h']]],
+  ['theron_5fenable_5fcounters',['THERON_ENABLE_COUNTERS',['../Defines_8h_a08023ece48c264f35b2f345d6d8ea30a.html#a08023ece48c264f35b2f345d6d8ea30a',1,'Defines.h']]],
   ['theron_5fenable_5fdefaultallocator_5fchecks',['THERON_ENABLE_DEFAULTALLOCATOR_CHECKS',['../Defines_8h_ad51a5513a03bbbac961f4a559b2f6fcc.html#ad51a5513a03bbbac961f4a559b2f6fcc',1,'Defines.h']]],
   ['theron_5fenable_5fmessage_5fregistration_5fchecks',['THERON_ENABLE_MESSAGE_REGISTRATION_CHECKS',['../Defines_8h_a45f62d8604cbbe0e0760ea1bf29d76a5.html#a45f62d8604cbbe0e0760ea1bf29d76a5',1,'Defines.h']]],
   ['theron_5fenable_5funhandled_5fmessage_5fchecks',['THERON_ENABLE_UNHANDLED_MESSAGE_CHECKS',['../Defines_8h_aaed406185c3d344b7f6f37be935120a2.html#aaed406185c3d344b7f6f37be935120a2',1,'Defines.h']]],
